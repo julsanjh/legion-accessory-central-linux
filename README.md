@@ -4,6 +4,8 @@ Native Linux driver and control utility for Lenovo Legion gaming accessories, re
 
 Built in Rust using `eframe` / `egui`, featuring the original visual identity, official graphics, full dark theme (`#11192C` / `#1F2A42` / `#257EFF`), CLI mode, and zero external daemon dependencies.
 
+![Legion Accessory Central Linux Screenshot](assets/screenshot.png)
+
 ---
 
 ## Supported Devices
