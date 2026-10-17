@@ -1,0 +1,24 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Windows installers & binary packages
+*.exe
+*.AppImage
+*.hex
+*.sig
+*.bin
+
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editor and IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

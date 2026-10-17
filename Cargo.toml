@@ -1,0 +1,14 @@
+[package]
+name = "legion-accessory-central"
+version = "2.0.9"
+edition = "2021"
+description = "Native Linux driver and control utility for Lenovo Legion gaming mice and keyboards"
+license = "MIT"
+readme = "README.md"
+authors = ["I Nyoman Julian Sanjaya <niatayauna324@gmail.com>"]
+
+[dependencies]
+eframe = "0.27.2"
+egui = "0.27.2"
+image = { version = "0.24.9", default-features = false, features = ["png"] }
+libc = "0.2"
