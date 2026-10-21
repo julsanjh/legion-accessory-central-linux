@@ -29,14 +29,35 @@ Built in Rust using `eframe` / `egui`, featuring the original visual identity, o
 
 ### 1. Install udev permissions rule
 
-Linux defaults `/dev/hidraw*` to `root:root (0600)`. Install the included rule so non-root users can access device endpoints:
+Linux defaults `/dev/hidraw*` to `root:root (0600)`.
+
+#### Standard Linux (Ubuntu, Fedora, Arch, Debian, etc.):
+Install the included rule so non-root users can access device endpoints without `sudo`:
 
 ```bash
 sudo cp 99-lenovo-legion-hid.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-*(Note: The GUI also has a built-in **Unlock USB (Polkit)** button that prompts for privilege escalation once and writes this rule automatically).*
+*(Alternatively, simply click the in-app **Unlock USB (Polkit)** button in the GUI to install this rule automatically).*
+
+#### NixOS:
+Because `/etc/` is managed declaratively in NixOS, add the rules directly to your `/etc/nixos/configuration.nix`:
+
+```nix
+services.udev.extraRules = ''
+  # Lenovo Legion Gaming Accessories
+  SUBSYSTEM=="hidraw", ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="60e4", MODE="0666", TAG+="uaccess"
+  SUBSYSTEM=="hidraw", ATTRS{idVendor}=="17ef", ATTRS{idProduct}=="60d5", MODE="0666", TAG+="uaccess"
+  # (Or copy all rules from 99-lenovo-legion-hid.rules)
+'';
+```
+
+Then rebuild your system configuration:
+
+```bash
+sudo nixos-rebuild switch
+```
 
 ### 2. Build and Run
 
