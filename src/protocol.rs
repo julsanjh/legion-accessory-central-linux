@@ -1,4 +1,6 @@
-use crate::models::{ParsedProfile, DEFAULT_PROFILE_RAW, SUPPORTED_MODELS};
+use crate::models::{
+    ParsedKbProfile, ParsedProfile, DEFAULT_PROFILE_RAW, SUPPORTED_MODELS,
+};
 
 pub fn checksum64(mut pkt: [u8; 64]) -> [u8; 64] {
     let sum: u8 = pkt[..63].iter().fold(0u8, |a, &b| a.wrapping_add(b));
@@ -194,6 +196,86 @@ pub fn parse_profile(raw: &[u8]) -> Option<ParsedProfile> {
     })
 }
 
+// --- Keyboard (K300 / K310 / K500) Protocol ---
+
+/// Build 9-byte Feature Report for sync / reading 448-byte profile (cmd 0x88, magic 0x5a)
+pub fn build_kb_feature_sync(profile_idx: u8) -> [u8; 9] {
+    let mut pkt = [0u8; 9];
+    pkt[0] = 0x00;
+    pkt[1] = 0x88;
+    pkt[2] = profile_idx;
+    pkt[3] = 0x5A;
+    pkt
+}
+
+/// Build 9-byte Feature Report to unlock lighting updates (cmd 0x14, magic 0x5a)
+pub fn build_kb_feature_unlock_lighting() -> [u8; 9] {
+    let mut pkt = [0u8; 9];
+    pkt[0] = 0x00;
+    pkt[1] = 0x14;
+    pkt[2] = 0x00;
+    pkt[3] = 0x5A;
+    pkt
+}
+
+/// Build 9-byte Feature Report for Game Mode (Win key lock, cmd 0x19, magic 0x5a)
+pub fn build_kb_feature_gamemode(enable: bool) -> [u8; 9] {
+    let mut pkt = [0u8; 9];
+    pkt[0] = 0x00;
+    pkt[1] = 0x19;
+    pkt[2] = 0x00;
+    pkt[3] = 0x5A;
+    pkt[4] = if enable { 0x01 } else { 0x00 };
+    pkt
+}
+
+/// Build 65-byte Output Report for Keyboard lighting (sent via write() after feature report unlock)
+pub fn build_kb_lighting_output_report(
+    effect_id: u8,
+    brightness: u8,
+    speed: u8,
+    c1: [u8; 3],
+    c2: Option<[u8; 3]>,
+) -> [u8; 65] {
+    let mut pkt = [0u8; 65];
+    pkt[0] = 0x00;
+    pkt[1] = effect_id;
+    pkt[2] = brightness.min(3);
+    pkt[3] = speed.min(3);
+    pkt[16] = c1[0];
+    pkt[17] = c1[1];
+    pkt[18] = c1[2];
+    if let Some(aux) = c2 {
+        pkt[20] = aux[0];
+        pkt[21] = aux[1];
+        pkt[22] = aux[2];
+    }
+    pkt
+}
+
+/// Parse 448-byte Keyboard Profile read from K300/K500
+pub fn parse_kb_profile(raw: &[u8]) -> Option<ParsedKbProfile> {
+    if raw.len() < 64 {
+        return None;
+    }
+    let effect_id = raw[1];
+    let brightness = raw[2];
+    let speed = raw[3];
+    let color1 = [raw[16], raw[17], raw[18]];
+    let color2 = [raw[20], raw[21], raw[22]];
+    let game_mode = raw.get(64).map(|&b| b != 0).unwrap_or(false);
+
+    Some(ParsedKbProfile {
+        effect_id,
+        brightness,
+        speed,
+        color1,
+        color2,
+        game_mode,
+        raw: raw.to_vec(),
+    })
+}
+
 pub fn parse_hex_rgb(s: &str) -> Result<[u8; 3], String> {
     let h = s.trim().trim_start_matches('#');
     if h.len() != 6 {
@@ -245,6 +327,31 @@ pub fn run_self_test() {
     let kpkt = build_key_action_packet(5, 0xB3);
     assert_eq!(&kpkt[..8], &[0x02, 0x00, 0x05, 0xB3, 0, 0, 0, 0]);
     assert_eq!(kpkt[63], 0x02u8.wrapping_add(0x05).wrapping_add(0xB3));
+
+    // Keyboard K500/K300 protocol test vectors
+    assert_eq!(
+        build_kb_feature_sync(0),
+        [0x00, 0x88, 0x00, 0x5A, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+    assert_eq!(
+        build_kb_feature_unlock_lighting(),
+        [0x00, 0x14, 0x00, 0x5A, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+    assert_eq!(
+        build_kb_feature_gamemode(true),
+        [0x00, 0x19, 0x00, 0x5A, 0x01, 0x00, 0x00, 0x00, 0x00]
+    );
+    assert_eq!(
+        build_kb_feature_gamemode(false),
+        [0x00, 0x19, 0x00, 0x5A, 0x00, 0x00, 0x00, 0x00, 0x00]
+    );
+
+    let kb_static = build_kb_lighting_output_report(1, 3, 2, [0xFF, 0x00, 0x00], None);
+    assert_eq!(kb_static[0], 0x00);
+    assert_eq!(kb_static[1], 1);
+    assert_eq!(kb_static[2], 3);
+    assert_eq!(kb_static[3], 2);
+    assert_eq!(&kb_static[16..19], &[0xFF, 0x00, 0x00]);
 
     println!(
         "Self-test passed: all Rust M300/Legion protocol vectors verified ({} models supported).",

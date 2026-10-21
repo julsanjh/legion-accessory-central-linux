@@ -23,15 +23,17 @@ fn print_help() {
          \x20 -d, --device <PATH>                Specify /dev/hidrawX path\n\
          \x20 --gui                              Launch graphical interface (default)\n\
          \x20 --self-test                        Verify protocol vectors\n\
-         \x20 --status                           Sync and print current mouse profile\n\
-         \x20 --lighting <EFFECT> [HEX1] [HEX2]  off | rainbow | random | static RRGGBB | breathing RRGGBB [RRGGBB2]\n\
+         \x20 --status                           Sync and print current device profile\n\
+         \x20 --lighting <EFFECT> [HEX1] [HEX2]  Mouse lighting: off | rainbow | random | static RRGGBB | breathing RRGGBB [RRGGBB2]\n\
+         \x20 --kb-lighting <EFFECT> [SPD] [HEX] Keyboard lighting: surfing | breathing_rainbow | drifting | static | breathing | starlight\n\
+         \x20 --game-mode <on|off>               Toggle keyboard Game Mode (Win key lock)\n\
          \x20 --dpi <STAGE_0_4> <DPI>            Set DPI for stage 0..4 (200..8000, step 100)\n\
          \x20 --dpi-active <STAGE_0_4>           Set active DPI stage (0..4)\n\
          \x20 --dpi-levels <COUNT_1_5>           Set number of DPI stages (1..5)\n\
          \x20 --rate <125|250|500|1000>          Set polling rate in Hz\n\
          \x20 --button <SLOT_0_9> <ACTION>       Map button slot to action\n\
          \x20 --factory-reset                    Restore device to factory defaults\n\
-         \x20 -h, --help                         Print help"
+        \x20 -h, --help                         Print help"
     );
 }
 
@@ -60,8 +62,7 @@ fn main() {
                 device_path = Some(args[i + 1].clone());
                 i += 2;
             }
-            "--status" | "--lighting" | "--dpi" | "--dpi-active" | "--dpi-levels" | "--rate"
-            | "--button" | "--factory-reset" => {
+            "--status" | "--lighting" | "--kb-lighting" | "--game-mode" | "--dpi" | "--dpi-active" | "--dpi-levels" | "--rate" | "--button" | "--factory-reset" => {
                 cli_ops = true;
                 break;
             }
@@ -116,6 +117,43 @@ fn main() {
                     println!("Lighting set to {eff}.");
                     i += step;
                 }
+                "--kb-lighting" if i + 1 < args.len() => {
+                    let eff_name = &args[i + 1];
+                    let eff = crate::models::KB_EFFECTS
+                        .iter()
+                        .find(|e| e.key == eff_name.to_lowercase())
+                        .cloned()
+                        .expect("Unknown keyboard effect");
+                    let mut speed = 2u8;
+                    let mut c1 = [0x25, 0x7E, 0xFF];
+                    let c2 = None;
+                    let mut step = 2;
+                    if i + 2 < args.len() && !args[i + 2].starts_with("--") {
+                        if let Ok(sp) = args[i + 2].parse::<u8>() {
+                            speed = sp.clamp(1, 4).saturating_sub(1);
+                            step += 1;
+                            if i + 3 < args.len() && !args[i + 3].starts_with("--") {
+                                c1 = parse_hex_rgb(&args[i + 3]).expect("Invalid hex color 1");
+                                step += 1;
+                            }
+                        } else if let Ok(col) = parse_hex_rgb(&args[i + 2]) {
+                            c1 = col;
+                            step += 1;
+                        }
+                    }
+                    conn.set_kb_lighting(eff.id, 3, speed, c1, c2).unwrap();
+                    println!("Keyboard lighting set to {}.", eff.label);
+                    i += step;
+                }
+                "--game-mode" if i + 1 < args.len() => {
+                    let en = match args[i + 1].to_lowercase().as_str() {
+                        "on" | "1" | "true" => true,
+                        _ => false,
+                    };
+                    conn.set_kb_gamemode(en).unwrap();
+                    println!("Keyboard Game Mode set to {}.", if en { "ON" } else { "OFF" });
+                    i += 2;
+                }
                 "--dpi" if i + 2 < args.len() => {
                     let idx: u8 = args[i + 1].parse().expect("Invalid stage index");
                     let dpi: u32 = args[i + 2].parse().expect("Invalid DPI");
@@ -159,19 +197,23 @@ fn main() {
                     i += 3;
                 }
                 "--status" => {
-                    match conn.sync() {
-                        Ok(prof) => {
-                            println!(
-                                "{{\n  \"name\": \"{}\",\n  \"report_rate_hz\": {},\n  \"active_dpi_index\": {},\n  \"dpi_levels\": {},\n  \"dpi_stages\": {:?},\n  \"lighting_effect\": \"{}\"\n}}",
-                                prof.name,
-                                prof.report_rate_hz,
-                                prof.active_dpi_index,
-                                prof.dpi_levels,
-                                &prof.dpi_stages[..prof.dpi_levels],
-                                prof.lighting_effect
-                            );
-                        }
-                        Err(e) => eprintln!("Sync error: {e}"),
+                    if let Ok(kb) = conn.sync_keyboard() {
+                        println!(
+                            "{{\n  \"device_type\": \"keyboard\",\n  \"effect_id\": {},\n  \"speed\": {},\n  \"brightness\": {},\n  \"game_mode\": {},\n  \"color1\": {:?}\n}}",
+                            kb.effect_id, kb.speed, kb.brightness, kb.game_mode, kb.color1
+                        );
+                    } else if let Ok(prof) = conn.sync() {
+                        println!(
+                            "{{\n  \"device_type\": \"mouse\",\n  \"name\": \"{}\",\n  \"report_rate_hz\": {},\n  \"active_dpi_index\": {},\n  \"dpi_levels\": {},\n  \"dpi_stages\": {:?},\n  \"lighting_effect\": \"{}\"\n}}",
+                            prof.name,
+                            prof.report_rate_hz,
+                            prof.active_dpi_index,
+                            prof.dpi_levels,
+                            &prof.dpi_stages[..prof.dpi_levels],
+                            prof.lighting_effect
+                        );
+                    } else {
+                        eprintln!("Error: Device did not respond to sync request.");
                     }
                     i += 1;
                 }

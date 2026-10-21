@@ -1,6 +1,6 @@
 use crate::hid::{detect_connected_devices, unlock_with_pkexec, HidConnection};
 use crate::models::{
-    DeviceKind, LegionModel, BUTTON_ACTIONS, DEFAULT_PROFILE_RAW, SUPPORTED_MODELS,
+    DeviceKind, LegionModel, BUTTON_ACTIONS, DEFAULT_PROFILE_RAW, KB_EFFECTS, SUPPORTED_MODELS,
     UI_BTN_TO_HW_OFFSET,
 };
 use crate::protocol::{
@@ -136,6 +136,26 @@ impl LegionApp {
             self.status_msg = "Perangkat tidak ditemukan.".to_string();
             return;
         };
+        let model = &SUPPORTED_MODELS[self.selected_model_idx];
+        if model.kind == DeviceKind::Keyboard {
+            match HidConnection::open(&path).and_then(|mut c| c.sync_keyboard()) {
+                Ok(kb) => {
+                    self.kb_speed = kb.speed.clamp(1, 4);
+                    self.color1 = kb.color1;
+                    self.color2 = kb.color2;
+                    self.kb_disable_win = kb.game_mode;
+                    if let Some(eff) = KB_EFFECTS.iter().find(|e| e.id == kb.effect_id) {
+                        self.kb_effect = eff.key.to_string();
+                    }
+                    self.status_msg = format!(
+                        "Synced from {}: {} | Effect: {} | Speed: {}",
+                        path, model.name, self.kb_effect, self.kb_speed
+                    );
+                }
+                Err(e) => self.status_msg = e,
+            }
+            return;
+        }
         match HidConnection::open(&path).and_then(|mut c| c.sync()) {
             Ok(prof) => {
                 self.lighting_effect = prof.lighting_effect;
@@ -683,10 +703,46 @@ impl LegionApp {
                         }
                     });
                 ui.add_space(20.0);
-                ui.label(RichText::new("Frequency:").color(Color32::WHITE));
-                ui.add(egui::Slider::new(&mut self.kb_speed, 1..=4).text("Speed"));
+                ui.label(RichText::new("Frequency / Speed:").color(Color32::WHITE));
+                ui.add(egui::Slider::new(&mut self.kb_speed, 1..=4).text(""));
                 ui.add_space(16.0);
                 ui.color_edit_button_srgb(&mut self.color1);
+
+                let eff_def = KB_EFFECTS
+                    .iter()
+                    .find(|e| e.key == self.kb_effect)
+                    .cloned()
+                    .unwrap_or(KB_EFFECTS[0]);
+                if eff_def.has_aux_color {
+                    ui.add_space(8.0);
+                    ui.color_edit_button_srgb(&mut self.color2);
+                }
+
+                ui.add_space(16.0);
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("APPLY KEYBOARD LIGHTING")
+                                .strong()
+                                .color(Color32::WHITE),
+                        )
+                        .fill(accent_blue)
+                        .rounding(Rounding::same(4.0)),
+                    )
+                    .clicked()
+                {
+                    let c1 = self.color1;
+                    let c2 = if eff_def.has_aux_color {
+                        Some(self.color2)
+                    } else {
+                        None
+                    };
+                    let speed = self.kb_speed.saturating_sub(1);
+                    self.with_device(move |conn| {
+                        conn.set_kb_lighting(eff_def.id, 3, speed, c1, c2)?;
+                        Ok(format!("Keyboard lighting set to {}", eff_def.label))
+                    });
+                }
             });
         });
 
@@ -708,11 +764,19 @@ impl LegionApp {
                 .color(muted_gray),
             );
             ui.add_space(12.0);
-            ui.checkbox(&mut self.kb_disable_win, "Disable Windows logo key");
+            if ui
+                .checkbox(&mut self.kb_disable_win, "Disable Windows logo key (Game Mode)")
+                .changed()
+            {
+                let en = self.kb_disable_win;
+                self.with_device(move |conn| {
+                    conn.set_kb_gamemode(en)?;
+                    Ok(format!("Game Mode: {}", if en { "Enabled" } else { "Disabled" }))
+                });
+            }
             ui.checkbox(&mut self.kb_disable_shift_tab, "Disable Shift+Tab");
             ui.checkbox(&mut self.kb_disable_alt_tab, "Disable Alt+Tab");
             ui.checkbox(&mut self.kb_disable_alt_f4, "Disable Alt+F4");
-            let _ = accent_blue;
         });
     }
 }

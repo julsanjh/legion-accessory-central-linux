@@ -183,3 +183,36 @@ pub struct ParsedProfile {
     pub color2: [u8; 3],
     pub button_codes: [u8; 10],
 }
+
+#[derive(Clone, Copy)]
+pub struct KbEffectDef {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub id: u8,
+    pub has_aux_color: bool,
+}
+
+pub const KB_EFFECTS: &[KbEffectDef] = &[
+    KbEffectDef { key: "surfing", label: "Surfing / Wave", id: 11, has_aux_color: false },
+    KbEffectDef { key: "static", label: "Static", id: 1, has_aux_color: false },
+    KbEffectDef { key: "spiral", label: "Spiral", id: 2, has_aux_color: false },
+    KbEffectDef { key: "laser", label: "Laser", id: 3, has_aux_color: false },
+    KbEffectDef { key: "drifting", label: "Drifting", id: 4, has_aux_color: false },
+    KbEffectDef { key: "fading_trace", label: "Fading Trace", id: 5, has_aux_color: false },
+    KbEffectDef { key: "customize", label: "Customize", id: 6, has_aux_color: false },
+    KbEffectDef { key: "breathing", label: "Breathing", id: 7, has_aux_color: true },
+    KbEffectDef { key: "breathing_rainbow", label: "Breathing (Rainbow)", id: 8, has_aux_color: false },
+    KbEffectDef { key: "starlight", label: "Starlight", id: 9, has_aux_color: false },
+    KbEffectDef { key: "starlight_dual_colors", label: "Starlight (Dual Colors)", id: 10, has_aux_color: true },
+];
+
+#[derive(Clone, Debug)]
+pub struct ParsedKbProfile {
+    pub effect_id: u8,
+    pub brightness: u8,
+    pub speed: u8,
+    pub color1: [u8; 3],
+    pub color2: [u8; 3],
+    pub game_mode: bool,
+    pub raw: Vec<u8>,
+}

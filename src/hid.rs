@@ -1,5 +1,8 @@
-use crate::models::{ParsedProfile, SUPPORTED_MODELS, VID_LENOVO};
-use crate::protocol::parse_profile;
+use crate::models::{ParsedKbProfile, ParsedProfile, SUPPORTED_MODELS, VID_LENOVO};
+use crate::protocol::{
+    build_kb_feature_gamemode, build_kb_feature_sync, build_kb_feature_unlock_lighting,
+    build_kb_lighting_output_report, parse_kb_profile, parse_profile,
+};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -149,5 +152,62 @@ impl HidConnection {
             let _ = self.write_raw(&[0x05, 0x00, 0x00], 50);
         }
         parse_profile(&acc[3..132]).ok_or_else(|| "Failed to parse 129-byte profile".to_string())
+    }
+
+    pub fn send_feature_report(&mut self, report: &[u8]) -> Result<(), String> {
+        let fd = self.file.as_raw_fd();
+        let req = (0xC0000000 as libc::c_ulong)
+            | ((b'H' as libc::c_ulong) << 8)
+            | (0x06 as libc::c_ulong)
+            | ((report.len() as libc::c_ulong) << 16);
+        let ret = unsafe { libc::ioctl(fd, req, report.as_ptr()) };
+        if ret < 0 {
+            return Err(format!(
+                "ioctl HIDIOCSFEATURE failed: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        thread::sleep(Duration::from_millis(60));
+        Ok(())
+    }
+
+    pub fn sync_keyboard(&mut self) -> Result<ParsedKbProfile, String> {
+        self.clear_queue();
+        let feat = build_kb_feature_sync(0);
+        self.send_feature_report(&feat)?;
+        let mut acc = Vec::with_capacity(448);
+        for _ in 0..7 {
+            let Some(pkt) = self.read_packet(600) else {
+                break;
+            };
+            acc.extend_from_slice(&pkt);
+        }
+        if acc.len() < 64 {
+            return Err(format!("Incomplete keyboard sync ({} bytes)", acc.len()));
+        }
+        parse_kb_profile(&acc).ok_or_else(|| "Failed to parse keyboard profile".to_string())
+    }
+
+    pub fn set_kb_lighting(
+        &mut self,
+        effect_id: u8,
+        brightness: u8,
+        speed: u8,
+        c1: [u8; 3],
+        c2: Option<[u8; 3]>,
+    ) -> Result<(), String> {
+        let unlock_feat = build_kb_feature_unlock_lighting();
+        self.send_feature_report(&unlock_feat)?;
+        let out_report = build_kb_lighting_output_report(effect_id, brightness, speed, c1, c2);
+        self.file
+            .write_all(&out_report)
+            .map_err(|e| format!("Keyboard lighting write failed: {e}"))?;
+        thread::sleep(Duration::from_millis(60));
+        Ok(())
+    }
+
+    pub fn set_kb_gamemode(&mut self, enable: bool) -> Result<(), String> {
+        let feat = build_kb_feature_gamemode(enable);
+        self.send_feature_report(&feat)
     }
 }
