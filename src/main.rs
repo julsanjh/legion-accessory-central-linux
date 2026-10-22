@@ -25,7 +25,8 @@ fn print_help() {
          \x20 --self-test                        Verify protocol vectors\n\
          \x20 --status                           Sync and print current device profile\n\
          \x20 --lighting <EFFECT> [HEX1] [HEX2]  Mouse lighting: off | rainbow | random | static RRGGBB | breathing RRGGBB [RRGGBB2]\n\
-         \x20 --kb-lighting <EFFECT> [SPD] [HEX] Keyboard lighting: surfing | breathing_rainbow | drifting | static | breathing | starlight\n\
+         \x20 --kb-lighting <EFFECT> [SPD] [HEX] Keyboard lighting: off | surfing | breathing_rainbow | drifting | static | breathing | starlight\n\
+         \x20 --kb-brightness <0|1|2>             Set keyboard brightness: 0=off, 1=dim, 2=bright\n\
          \x20 --game-mode <on|off>               Toggle keyboard Game Mode (Win key lock)\n\
          \x20 --dpi <STAGE_0_4> <DPI>            Set DPI for stage 0..4 (200..8000, step 100)\n\
          \x20 --dpi-active <STAGE_0_4>           Set active DPI stage (0..4)\n\
@@ -62,7 +63,7 @@ fn main() {
                 device_path = Some(args[i + 1].clone());
                 i += 2;
             }
-            "--status" | "--lighting" | "--kb-lighting" | "--game-mode" | "--dpi" | "--dpi-active" | "--dpi-levels" | "--rate" | "--button" | "--factory-reset" => {
+            "--status" | "--lighting" | "--kb-lighting" | "--kb-brightness" | "--game-mode" | "--dpi" | "--dpi-active" | "--dpi-levels" | "--rate" | "--button" | "--factory-reset" => {
                 cli_ops = true;
                 break;
             }
@@ -119,31 +120,60 @@ fn main() {
                 }
                 "--kb-lighting" if i + 1 < args.len() => {
                     let eff_name = &args[i + 1];
-                    let eff = crate::models::KB_EFFECTS
-                        .iter()
-                        .find(|e| e.key == eff_name.to_lowercase())
-                        .cloned()
-                        .expect("Unknown keyboard effect");
+                    let is_off = eff_name.eq_ignore_ascii_case("off");
+                    let eff = if is_off {
+                        crate::models::KB_EFFECTS
+                            .iter()
+                            .find(|e| e.key == "static")
+                            .cloned()
+                            .unwrap()
+                    } else {
+                        crate::models::KB_EFFECTS
+                            .iter()
+                            .find(|e| e.key == eff_name.to_lowercase())
+                            .cloned()
+                            .expect("Unknown keyboard effect")
+                    };
+                    let brightness = if is_off { 0u8 } else { 2u8 };
                     let mut speed = 2u8;
                     let mut c1 = [0x25, 0x7E, 0xFF];
-                    let c2 = None;
+                    let mut c2 = None;
+                    let mut has_c1 = false;
                     let mut step = 2;
-                    if i + 2 < args.len() && !args[i + 2].starts_with("--") {
-                        if let Ok(sp) = args[i + 2].parse::<u8>() {
+                    while i + step < args.len() && !args[i + step].starts_with("--") {
+                        if let Ok(col) = parse_hex_rgb(&args[i + step]) {
+                            if !has_c1 {
+                                c1 = col;
+                                has_c1 = true;
+                            } else if eff.has_aux_color && c2.is_none() {
+                                c2 = Some(col);
+                            }
+                            step += 1;
+                        } else if let Ok(sp) = args[i + step].parse::<u8>() {
                             speed = sp.clamp(1, 4).saturating_sub(1);
                             step += 1;
-                            if i + 3 < args.len() && !args[i + 3].starts_with("--") {
-                                c1 = parse_hex_rgb(&args[i + 3]).expect("Invalid hex color 1");
-                                step += 1;
-                            }
-                        } else if let Ok(col) = parse_hex_rgb(&args[i + 2]) {
-                            c1 = col;
-                            step += 1;
+                        } else {
+                            break;
                         }
                     }
-                    conn.set_kb_lighting(eff.id, 3, speed, c1, c2).unwrap();
-                    println!("Keyboard lighting set to {}.", eff.label);
+                    conn.set_kb_lighting(eff.id, brightness, speed, c1, c2).unwrap();
+                    println!("Keyboard lighting set to {}.", if is_off { "off" } else { eff.label });
                     i += step;
+                }
+                "--kb-brightness" if i + 1 < args.len() => {
+                    let brightness: u8 = args[i + 1].parse().expect("Invalid brightness (expected 0, 1, or 2)");
+                    let brightness = brightness.min(2);
+                    let (eff_id, speed, c1, c2) = match conn.sync_keyboard() {
+                        Ok(kb) => (kb.effect_id, kb.speed.min(3), kb.color1, Some(kb.color2)),
+                        Err(_) => (1, 2, [0x25, 0x7E, 0xFF], None),
+                    };
+                    conn.set_kb_lighting(eff_id, brightness, speed, c1, c2).unwrap();
+                    println!("Keyboard brightness set to {brightness} ({}).", match brightness {
+                        0 => "off",
+                        1 => "dim",
+                        _ => "bright",
+                    });
+                    i += 2;
                 }
                 "--game-mode" if i + 1 < args.len() => {
                     let en = match args[i + 1].to_lowercase().as_str() {

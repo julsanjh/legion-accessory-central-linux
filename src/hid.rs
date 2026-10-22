@@ -1,7 +1,8 @@
 use crate::models::{ParsedKbProfile, ParsedProfile, SUPPORTED_MODELS, VID_LENOVO};
 use crate::protocol::{
-    build_kb_feature_gamemode, build_kb_feature_sync, build_kb_feature_unlock_lighting,
-    build_kb_lighting_output_report, parse_kb_profile, parse_profile,
+    build_kb_feature_sync, build_kb_feature_unlock_gamemode, build_kb_feature_unlock_lighting,
+    build_kb_gamemode_output_report, build_kb_lighting_output_report, parse_kb_profile,
+    parse_profile,
 };
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -207,7 +208,13 @@ impl HidConnection {
     }
 
     pub fn set_kb_gamemode(&mut self, enable: bool) -> Result<(), String> {
-        let feat = build_kb_feature_gamemode(enable);
-        self.send_feature_report(&feat)
+        let unlock_feat = build_kb_feature_unlock_gamemode();
+        self.send_feature_report(&unlock_feat)?;
+        let out_report = build_kb_gamemode_output_report(enable);
+        self.file
+            .write_all(&out_report)
+            .map_err(|e| format!("Keyboard game mode write failed: {e}"))?;
+        thread::sleep(Duration::from_millis(60));
+        Ok(())
     }
 }

@@ -218,14 +218,22 @@ pub fn build_kb_feature_unlock_lighting() -> [u8; 9] {
     pkt
 }
 
-/// Build 9-byte Feature Report for Game Mode (Win key lock, cmd 0x19, magic 0x5a)
-pub fn build_kb_feature_gamemode(enable: bool) -> [u8; 9] {
+/// Build 9-byte Feature Report to unlock Game Mode updates (cmd 0x15, magic 0x5a)
+pub fn build_kb_feature_unlock_gamemode() -> [u8; 9] {
     let mut pkt = [0u8; 9];
     pkt[0] = 0x00;
-    pkt[1] = 0x19;
+    pkt[1] = 0x15;
     pkt[2] = 0x00;
     pkt[3] = 0x5A;
-    pkt[4] = if enable { 0x01 } else { 0x00 };
+    pkt
+}
+
+/// Build 65-byte Output Report for Game Mode (sent via write() after feature report unlock)
+pub fn build_kb_gamemode_output_report(enable: bool) -> [u8; 65] {
+    let mut pkt = [0u8; 65];
+    pkt[0] = 0x00; // Report ID
+    pkt[1] = if enable { 0x01 } else { 0x00 }; // Master Game Mode Enable
+    pkt[2] = if enable { 0x01 } else { 0x00 }; // Disable Windows logo key
     pkt
 }
 
@@ -238,17 +246,18 @@ pub fn build_kb_lighting_output_report(
     c2: Option<[u8; 3]>,
 ) -> [u8; 65] {
     let mut pkt = [0u8; 65];
-    pkt[0] = 0x00;
-    pkt[1] = effect_id;
-    pkt[2] = brightness.min(3);
-    pkt[3] = speed.min(3);
-    pkt[16] = c1[0];
-    pkt[17] = c1[1];
-    pkt[18] = c1[2];
+    pkt[0] = 0x00; // Report ID
+    pkt[1] = 0x01; // payload[0]: non-zero active marker / profile
+    pkt[2] = effect_id; // payload[1]
+    pkt[3] = brightness.min(2); // payload[2]: 0=off, 1=dim, 2=bright
+    pkt[4] = speed.min(3); // payload[3]: frequency 0..3
+    pkt[17] = c1[0]; // payload[16]
+    pkt[18] = c1[1]; // payload[17]
+    pkt[19] = c1[2]; // payload[18]
     if let Some(aux) = c2 {
-        pkt[20] = aux[0];
-        pkt[21] = aux[1];
-        pkt[22] = aux[2];
+        pkt[21] = aux[0]; // payload[20]
+        pkt[22] = aux[1]; // payload[21]
+        pkt[23] = aux[2]; // payload[22]
     }
     pkt
 }
@@ -258,12 +267,18 @@ pub fn parse_kb_profile(raw: &[u8]) -> Option<ParsedKbProfile> {
     if raw.len() < 64 {
         return None;
     }
-    let effect_id = raw[1];
-    let brightness = raw[2];
-    let speed = raw[3];
-    let color1 = [raw[16], raw[17], raw[18]];
-    let color2 = [raw[20], raw[21], raw[22]];
-    let game_mode = raw.get(64).map(|&b| b != 0).unwrap_or(false);
+    // Profile layout: [0..64) Name, [64..320) LightingParam, [320..384) GameMode
+    let base = if raw.len() >= 87 { 64 } else { 0 };
+    let game_mode = if raw.len() >= 322 {
+        raw[320] != 0 || raw[321] != 0
+    } else {
+        false
+    };
+    let effect_id = raw[base + 1];
+    let brightness = raw[base + 2].min(2);
+    let speed = raw[base + 3].min(3);
+    let color1 = [raw[base + 16], raw[base + 17], raw[base + 18]];
+    let color2 = [raw[base + 20], raw[base + 21], raw[base + 22]];
 
     Some(ParsedKbProfile {
         effect_id,
@@ -338,21 +353,30 @@ pub fn run_self_test() {
         [0x00, 0x14, 0x00, 0x5A, 0x00, 0x00, 0x00, 0x00, 0x00]
     );
     assert_eq!(
-        build_kb_feature_gamemode(true),
-        [0x00, 0x19, 0x00, 0x5A, 0x01, 0x00, 0x00, 0x00, 0x00]
+        build_kb_feature_unlock_gamemode(),
+        [0x00, 0x15, 0x00, 0x5A, 0x00, 0x00, 0x00, 0x00, 0x00]
     );
-    assert_eq!(
-        build_kb_feature_gamemode(false),
-        [0x00, 0x19, 0x00, 0x5A, 0x00, 0x00, 0x00, 0x00, 0x00]
-    );
+    let gm_on = build_kb_gamemode_output_report(true);
+    assert_eq!(gm_on[0], 0x00);
+    assert_eq!(gm_on[1], 0x01);
+    assert_eq!(gm_on[2], 0x01);
+    let gm_off = build_kb_gamemode_output_report(false);
+    assert_eq!(gm_off[0], 0x00);
+    assert_eq!(gm_off[1], 0x00);
+    assert_eq!(gm_off[2], 0x00);
 
-    let kb_static = build_kb_lighting_output_report(1, 3, 2, [0xFF, 0x00, 0x00], None);
+    let kb_static = build_kb_lighting_output_report(1, 2, 2, [0xFF, 0x00, 0x00], None);
     assert_eq!(kb_static[0], 0x00);
-    assert_eq!(kb_static[1], 1);
-    assert_eq!(kb_static[2], 3);
+    assert_eq!(kb_static[1], 0x01);
+    assert_eq!(kb_static[2], 1);
     assert_eq!(kb_static[3], 2);
-    assert_eq!(&kb_static[16..19], &[0xFF, 0x00, 0x00]);
+    assert_eq!(kb_static[4], 2);
+    assert_eq!(&kb_static[17..20], &[0xFF, 0x00, 0x00]);
+    assert_eq!(&kb_static[21..24], &[0x00, 0x00, 0x00]);
 
+    let kb_dual = build_kb_lighting_output_report(7, 2, 2, [0xFF, 0x00, 0x00], Some([0x00, 0xFF, 0x00]));
+    assert_eq!(&kb_dual[17..20], &[0xFF, 0x00, 0x00]);
+    assert_eq!(&kb_dual[21..24], &[0x00, 0xFF, 0x00]);
     println!(
         "Self-test passed: all Rust M300/Legion protocol vectors verified ({} models supported).",
         SUPPORTED_MODELS.len()

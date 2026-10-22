@@ -49,6 +49,7 @@ pub struct LegionApp {
 
     // Keyboard state
     kb_effect: String,
+    kb_brightness: u8,
     kb_speed: u8,
     kb_disable_win: bool,
     kb_disable_shift_tab: bool,
@@ -93,6 +94,7 @@ impl LegionApp {
             report_rate_hz: 1000,
             ui_button_codes: [0xB0, 0xB1, 0xB2, 0xC1, 0xB3, 0xB4, 0x01, 0x00],
             kb_effect: "surfing".to_string(),
+            kb_brightness: 2,
             kb_speed: 2,
             kb_disable_win: true,
             kb_disable_shift_tab: false,
@@ -140,6 +142,7 @@ impl LegionApp {
         if model.kind == DeviceKind::Keyboard {
             match HidConnection::open(&path).and_then(|mut c| c.sync_keyboard()) {
                 Ok(kb) => {
+                    self.kb_brightness = kb.brightness.min(2);
                     self.kb_speed = kb.speed.clamp(1, 4);
                     self.color1 = kb.color1;
                     self.color2 = kb.color2;
@@ -148,8 +151,8 @@ impl LegionApp {
                         self.kb_effect = eff.key.to_string();
                     }
                     self.status_msg = format!(
-                        "Synced from {}: {} | Effect: {} | Speed: {}",
-                        path, model.name, self.kb_effect, self.kb_speed
+                        "Synced from {}: {} | Effect: {} | Brightness: {} | Speed: {}",
+                        path, model.name, self.kb_effect, self.kb_brightness, self.kb_speed
                     );
                 }
                 Err(e) => self.status_msg = e,
@@ -703,9 +706,11 @@ impl LegionApp {
                         }
                     });
                 ui.add_space(20.0);
+                ui.label(RichText::new("Brightness:").color(Color32::WHITE));
+                ui.add(egui::Slider::new(&mut self.kb_brightness, 0..=2).text(""));
+                ui.add_space(20.0);
                 ui.label(RichText::new("Frequency / Speed:").color(Color32::WHITE));
                 ui.add(egui::Slider::new(&mut self.kb_speed, 1..=4).text(""));
-                ui.add_space(16.0);
                 ui.color_edit_button_srgb(&mut self.color1);
 
                 let eff_def = KB_EFFECTS
@@ -737,9 +742,10 @@ impl LegionApp {
                     } else {
                         None
                     };
+                    let brightness = self.kb_brightness.min(2);
                     let speed = self.kb_speed.saturating_sub(1);
                     self.with_device(move |conn| {
-                        conn.set_kb_lighting(eff_def.id, 3, speed, c1, c2)?;
+                        conn.set_kb_lighting(eff_def.id, brightness, speed, c1, c2)?;
                         Ok(format!("Keyboard lighting set to {}", eff_def.label))
                     });
                 }
