@@ -229,11 +229,11 @@ pub fn build_kb_feature_unlock_gamemode() -> [u8; 9] {
 }
 
 /// Build 65-byte Output Report for Game Mode (sent via write() after feature report unlock)
-pub fn build_kb_gamemode_output_report(enable: bool) -> [u8; 65] {
+pub fn build_kb_gamemode_output_report(master_enable: bool, win_lock: bool) -> [u8; 65] {
     let mut pkt = [0u8; 65];
     pkt[0] = 0x00; // Report ID
-    pkt[1] = if enable { 0x01 } else { 0x00 }; // Master Game Mode Enable
-    pkt[2] = if enable { 0x01 } else { 0x00 }; // Disable Windows logo key
+    pkt[1] = if master_enable { 0x01 } else { 0x00 }; // Master Game Mode Enable (indicator LED)
+    pkt[2] = if win_lock { 0x01 } else { 0x00 }; // Disable Windows logo key
     pkt
 }
 
@@ -264,16 +264,15 @@ pub fn build_kb_lighting_output_report(
 
 /// Parse 448-byte Keyboard Profile read from K300/K500
 pub fn parse_kb_profile(raw: &[u8]) -> Option<ParsedKbProfile> {
-    if raw.len() < 64 {
+    // Need the lighting block through auxiliary blue byte at offset 342.
+    if raw.len() < 343 {
         return None;
     }
-    // Profile layout: [0..64) Name, [64..320) LightingParam, [320..384) GameMode
-    let base = if raw.len() >= 87 { 64 } else { 0 };
-    let game_mode = if raw.len() >= 322 {
-        raw[320] != 0 || raw[321] != 0
-    } else {
-        false
-    };
+    // Profile layout: Name [0..64), key map [64..320), lighting [320..384),
+    // Game Mode [384..448), with independent master and Win-lock flags.
+    let base = 320;
+    let game_mode = raw.get(384).map(|&b| b != 0).unwrap_or(false);
+    let win_lock = raw.get(385).map(|&b| b != 0).unwrap_or(false);
     let effect_id = raw[base + 1];
     let brightness = raw[base + 2].min(2);
     let speed = raw[base + 3].min(3);
@@ -287,6 +286,7 @@ pub fn parse_kb_profile(raw: &[u8]) -> Option<ParsedKbProfile> {
         color1,
         color2,
         game_mode,
+        win_lock,
         raw: raw.to_vec(),
     })
 }
@@ -356,11 +356,14 @@ pub fn run_self_test() {
         build_kb_feature_unlock_gamemode(),
         [0x00, 0x15, 0x00, 0x5A, 0x00, 0x00, 0x00, 0x00, 0x00]
     );
-    let gm_on = build_kb_gamemode_output_report(true);
+    let gm_on = build_kb_gamemode_output_report(true, true);
     assert_eq!(gm_on[0], 0x00);
     assert_eq!(gm_on[1], 0x01);
     assert_eq!(gm_on[2], 0x01);
-    let gm_off = build_kb_gamemode_output_report(false);
+    let gm_indicator_only = build_kb_gamemode_output_report(true, false);
+    assert_eq!(gm_indicator_only[1], 0x01);
+    assert_eq!(gm_indicator_only[2], 0x00);
+    let gm_off = build_kb_gamemode_output_report(false, false);
     assert_eq!(gm_off[0], 0x00);
     assert_eq!(gm_off[1], 0x00);
     assert_eq!(gm_off[2], 0x00);
@@ -377,6 +380,25 @@ pub fn run_self_test() {
     let kb_dual = build_kb_lighting_output_report(7, 2, 2, [0xFF, 0x00, 0x00], Some([0x00, 0xFF, 0x00]));
     assert_eq!(&kb_dual[17..20], &[0xFF, 0x00, 0x00]);
     assert_eq!(&kb_dual[21..24], &[0x00, 0xFF, 0x00]);
+    let mut fake_448 = vec![0u8; 448];
+    fake_448[320] = 0x01; // marker
+    fake_448[321] = 1;    // effect_id static
+    fake_448[322] = 2;    // brightness
+    fake_448[323] = 1;    // speed
+    fake_448[336] = 0x12; // R
+    fake_448[337] = 0x34; // G
+    fake_448[338] = 0x56; // B
+    fake_448[384] = 0x01; // master enable
+    fake_448[385] = 0x01; // win_lock
+    let parsed = parse_kb_profile(&fake_448).expect("parse 448-byte profile");
+    assert_eq!(parsed.effect_id, 1);
+    assert_eq!(parsed.brightness, 2);
+    assert_eq!(parsed.speed, 1);
+    assert_eq!(parsed.color1, [0x12, 0x34, 0x56]);
+    assert!(parsed.game_mode);
+    assert!(parsed.win_lock);
+    assert!(parse_kb_profile(&fake_448[..342]).is_none());
+    assert_eq!(parse_kb_profile(&fake_448[..343]).unwrap().effect_id, 1);
     println!(
         "Self-test passed: all Rust M300/Legion protocol vectors verified ({} models supported).",
         SUPPORTED_MODELS.len()

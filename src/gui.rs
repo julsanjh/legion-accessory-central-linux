@@ -146,7 +146,7 @@ impl LegionApp {
                     self.kb_speed = kb.speed.clamp(1, 4);
                     self.color1 = kb.color1;
                     self.color2 = kb.color2;
-                    self.kb_disable_win = kb.game_mode;
+                    self.kb_disable_win = kb.win_lock;
                     if let Some(eff) = KB_EFFECTS.iter().find(|e| e.id == kb.effect_id) {
                         self.kb_effect = eff.key.to_string();
                     }
@@ -776,7 +776,7 @@ impl LegionApp {
             {
                 let en = self.kb_disable_win;
                 self.with_device(move |conn| {
-                    conn.set_kb_gamemode(en)?;
+                    conn.set_kb_gamemode(en, en)?;
                     Ok(format!("Game Mode: {}", if en { "Enabled" } else { "Disabled" }))
                 });
             }

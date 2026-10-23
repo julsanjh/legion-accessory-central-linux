@@ -207,10 +207,10 @@ impl HidConnection {
         Ok(())
     }
 
-    pub fn set_kb_gamemode(&mut self, enable: bool) -> Result<(), String> {
+    pub fn set_kb_gamemode(&mut self, enable: bool, win_lock: bool) -> Result<(), String> {
         let unlock_feat = build_kb_feature_unlock_gamemode();
         self.send_feature_report(&unlock_feat)?;
-        let out_report = build_kb_gamemode_output_report(enable);
+        let out_report = build_kb_gamemode_output_report(enable, win_lock);
         self.file
             .write_all(&out_report)
             .map_err(|e| format!("Keyboard game mode write failed: {e}"))?;

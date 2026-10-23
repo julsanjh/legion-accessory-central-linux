@@ -214,5 +214,6 @@ pub struct ParsedKbProfile {
     pub color1: [u8; 3],
     pub color2: [u8; 3],
     pub game_mode: bool,
+    pub win_lock: bool,
     pub raw: Vec<u8>,
 }

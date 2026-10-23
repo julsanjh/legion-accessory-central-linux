@@ -25,9 +25,9 @@ fn print_help() {
          \x20 --self-test                        Verify protocol vectors\n\
          \x20 --status                           Sync and print current device profile\n\
          \x20 --lighting <EFFECT> [HEX1] [HEX2]  Mouse lighting: off | rainbow | random | static RRGGBB | breathing RRGGBB [RRGGBB2]\n\
-         \x20 --kb-lighting <EFFECT> [SPD] [HEX] Keyboard lighting: off | surfing | breathing_rainbow | drifting | static | breathing | starlight\n\
+         \x20 --kb-lighting <EFFECT> [SPD/BRIGHT] [HEX] Keyboard lighting: off | surfing | breathing_rainbow | drifting | static | breathing | starlight\n\
          \x20 --kb-brightness <0|1|2>             Set keyboard brightness: 0=off, 1=dim, 2=bright\n\
-         \x20 --game-mode <on|off>               Toggle keyboard Game Mode (Win key lock)\n\
+         \x20 --game-mode <on|off> [lock|unlock]  Toggle keyboard Game Mode (Win key lock)\n\
          \x20 --dpi <STAGE_0_4> <DPI>            Set DPI for stage 0..4 (200..8000, step 100)\n\
          \x20 --dpi-active <STAGE_0_4>           Set active DPI stage (0..4)\n\
          \x20 --dpi-levels <COUNT_1_5>           Set number of DPI stages (1..5)\n\
@@ -134,14 +134,16 @@ fn main() {
                             .cloned()
                             .expect("Unknown keyboard effect")
                     };
-                    let brightness = if is_off { 0u8 } else { 2u8 };
+                    let mut brightness = if is_off { 0u8 } else { 2u8 };
                     let mut speed = 2u8;
                     let mut c1 = [0x25, 0x7E, 0xFF];
                     let mut c2 = None;
                     let mut has_c1 = false;
+                    let mut num_count = 0;
                     let mut step = 2;
                     while i + step < args.len() && !args[i + step].starts_with("--") {
-                        if let Ok(col) = parse_hex_rgb(&args[i + step]) {
+                        let arg = &args[i + step];
+                        if let Ok(col) = parse_hex_rgb(arg) {
                             if !has_c1 {
                                 c1 = col;
                                 has_c1 = true;
@@ -149,24 +151,37 @@ fn main() {
                                 c2 = Some(col);
                             }
                             step += 1;
-                        } else if let Ok(sp) = args[i + step].parse::<u8>() {
-                            speed = sp.clamp(1, 4).saturating_sub(1);
+                        } else if let Ok(n) = arg.parse::<u8>() {
+                            if eff.key == "static" || eff.key == "customize" {
+                                brightness = n.min(2);
+                            } else if num_count == 0 {
+                                speed = n.clamp(1, 4).saturating_sub(1);
+                                num_count += 1;
+                            } else {
+                                brightness = n.min(2);
+                            }
                             step += 1;
                         } else {
                             break;
                         }
                     }
                     conn.set_kb_lighting(eff.id, brightness, speed, c1, c2).unwrap();
-                    println!("Keyboard lighting set to {}.", if is_off { "off" } else { eff.label });
+                    println!(
+                        "Keyboard lighting set to {} (brightness {}, speed {}).",
+                        if is_off { "off" } else { eff.label },
+                        brightness,
+                        speed + 1
+                    );
                     i += step;
                 }
                 "--kb-brightness" if i + 1 < args.len() => {
                     let brightness: u8 = args[i + 1].parse().expect("Invalid brightness (expected 0, 1, or 2)");
                     let brightness = brightness.min(2);
-                    let (eff_id, speed, c1, c2) = match conn.sync_keyboard() {
-                        Ok(kb) => (kb.effect_id, kb.speed.min(3), kb.color1, Some(kb.color2)),
-                        Err(_) => (1, 2, [0x25, 0x7E, 0xFF], None),
-                    };
+                    let kb = conn
+                        .sync_keyboard()
+                        .expect("Could not sync keyboard before changing brightness");
+                    let (eff_id, speed, c1, c2) =
+                        (kb.effect_id, kb.speed.min(3), kb.color1, Some(kb.color2));
                     conn.set_kb_lighting(eff_id, brightness, speed, c1, c2).unwrap();
                     println!("Keyboard brightness set to {brightness} ({}).", match brightness {
                         0 => "off",
@@ -180,9 +195,22 @@ fn main() {
                         "on" | "1" | "true" => true,
                         _ => false,
                     };
-                    conn.set_kb_gamemode(en).unwrap();
-                    println!("Keyboard Game Mode set to {}.", if en { "ON" } else { "OFF" });
-                    i += 2;
+                    let win_lock = if i + 2 < args.len() && !args[i + 2].starts_with("--") {
+                        match args[i + 2].to_lowercase().as_str() {
+                            "on" | "1" | "true" | "lock" => true,
+                            _ => false,
+                        }
+                    } else {
+                        en
+                    };
+                    let step = if i + 2 < args.len() && !args[i + 2].starts_with("--") { 3 } else { 2 };
+                    conn.set_kb_gamemode(en, win_lock).unwrap();
+                    println!(
+                        "Keyboard Game Mode set to {} (Win key: {}).",
+                        if en { "ON" } else { "OFF" },
+                        if win_lock { "locked" } else { "unlocked" }
+                    );
+                    i += step;
                 }
                 "--dpi" if i + 2 < args.len() => {
                     let idx: u8 = args[i + 1].parse().expect("Invalid stage index");
@@ -229,8 +257,8 @@ fn main() {
                 "--status" => {
                     if let Ok(kb) = conn.sync_keyboard() {
                         println!(
-                            "{{\n  \"device_type\": \"keyboard\",\n  \"effect_id\": {},\n  \"speed\": {},\n  \"brightness\": {},\n  \"game_mode\": {},\n  \"color1\": {:?}\n}}",
-                            kb.effect_id, kb.speed, kb.brightness, kb.game_mode, kb.color1
+                            "{{\n  \"device_type\": \"keyboard\",\n  \"effect_id\": {},\n  \"speed\": {},\n  \"brightness\": {},\n  \"game_mode\": {},\n  \"win_lock\": {},\n  \"color1\": {:?}\n}}",
+                            kb.effect_id, kb.speed, kb.brightness, kb.game_mode, kb.win_lock, kb.color1
                         );
                     } else if let Ok(prof) = conn.sync() {
                         println!(
