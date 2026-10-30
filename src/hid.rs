@@ -93,10 +93,7 @@ impl HidConnection {
     }
 
     pub fn clear_queue(&mut self) {
-        let mut buf = [0u8; 64];
-        while self.read_packet(5).is_some() {
-            let _ = self.file.read(&mut buf);
-        }
+        while self.read_packet(5).is_some() {}
     }
 
     pub fn write_raw(&mut self, payload64: &[u8], delay_ms: u64) -> Result<(), String> {
@@ -176,13 +173,15 @@ impl HidConnection {
         self.clear_queue();
         let feat = build_kb_feature_sync(0);
         self.send_feature_report(&feat)?;
-        let mut acc = Vec::with_capacity(448);
-        for _ in 0..7 {
+        let mut acc = Vec::with_capacity(512);
+        // Keyboard sends 8 packets (8 * 64 = 512 bytes)
+        for _ in 0..8 {
             let Some(pkt) = self.read_packet(600) else {
                 break;
             };
             acc.extend_from_slice(&pkt);
         }
+        self.clear_queue();
         if acc.len() < 64 {
             return Err(format!("Incomplete keyboard sync ({} bytes)", acc.len()));
         }

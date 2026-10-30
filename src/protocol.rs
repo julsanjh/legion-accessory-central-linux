@@ -274,6 +274,9 @@ pub fn parse_kb_profile(raw: &[u8]) -> Option<ParsedKbProfile> {
     let game_mode = raw.get(384).map(|&b| b != 0).unwrap_or(false);
     let win_lock = raw.get(385).map(|&b| b != 0).unwrap_or(false);
     let effect_id = raw[base + 1];
+    if !(1..=11).contains(&effect_id) {
+        return None;
+    }
     let brightness = raw[base + 2].min(2);
     let speed = raw[base + 3].min(3);
     let color1 = [raw[base + 16], raw[base + 17], raw[base + 18]];
@@ -399,6 +402,9 @@ pub fn run_self_test() {
     assert!(parsed.win_lock);
     assert!(parse_kb_profile(&fake_448[..342]).is_none());
     assert_eq!(parse_kb_profile(&fake_448[..343]).unwrap().effect_id, 1);
+    fake_448[321] = 255;
+    assert!(parse_kb_profile(&fake_448).is_none());
+    fake_448[321] = 1;
     println!(
         "Self-test passed: all Rust M300/Legion protocol vectors verified ({} models supported).",
         SUPPORTED_MODELS.len()
